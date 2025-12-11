@@ -1,3 +1,4 @@
+console.log("Script loaded");
 async function loadGTFS(filename) {
     const response = await fetch(filename);
     const text = await response.text();
@@ -153,3 +154,4 @@ function buildEdges(stopTimes, tripToRoute, routeColor) {
 
 
 })();
+
