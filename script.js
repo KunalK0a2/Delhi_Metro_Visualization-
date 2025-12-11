@@ -44,10 +44,10 @@ function buildEdges(stopTimes, tripToRoute, routeColor) {
 }
 
 (async function() {
-    const stops = await loadGTFS("./dmrc_gtfs/stops.txt");
-    const stopTimes = await loadGTFS("./dmrc_gtfs/stop_times.txt");
-    const trips = await loadGTFS("./dmrc_gtfs/trips.txt");
-    const routes = await loadGTFS("./dmrc_gtfs/routes.txt");
+    const stops = await loadGTFS("dmrc_gtfs/stops.txt");
+    const stopTimes = await loadGTFS("dmrc_gtfs/stop_times.txt");
+    const trips = await loadGTFS("dmrc_gtfs/trips.txt");
+    const routes = await loadGTFS("dmrc_gtfs/routes.txt");
 
     // Map trip_id -> route_id
     const tripToRoute = {};
@@ -150,5 +150,6 @@ function buildEdges(stopTimes, tripToRoute, routeColor) {
             tooltip.style("opacity", 0);
         }
     });
+
 
 })();
