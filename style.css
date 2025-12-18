@@ -1,4 +1,20 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
 #map {
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
+}
+
+/* Dark background */
+body {
+  background: #0b1220;
+}
+
+.leaflet-control {
+  background: #020617;
+  color: #e5e7eb;
 }
