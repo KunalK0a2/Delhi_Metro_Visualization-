@@ -1,159 +1,289 @@
-console.log("Script loaded");
-async function loadGTFS(filename) {
-    const response = await fetch(filename);
-    const text = await response.text();
-    const rows = text.trim().split("\n").map(r => r.split(","));
-    const headers = rows[0];
-    return rows.slice(1).map(row => {
-        let obj = {};
-        row.forEach((value, i) => obj[headers[i]] = value);
-        return obj;
-    });
-}
 
-function buildEdges(stopTimes, tripToRoute, routeColor) {
-    const trips = {};
-    stopTimes.forEach(s => {
-        if (!trips[s.trip_id]) trips[s.trip_id] = [];
-        trips[s.trip_id].push(s);
-    });
+async function loadCSV(path) {
+  const text = await fetch(path).then(r => r.text());
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",");
 
-    let edges = [];
-    Object.entries(trips).forEach(([trip_id, st]) => {
-        st.sort((a, b) => Number(a.stop_sequence) - Number(b.stop_sequence));
-        const color = routeColor[tripToRoute[trip_id]] || "#888";
-        for (let i = 0; i < st.length - 1; i++) {
-            edges.push({
-                from: st[i].stop_id,
-                to: st[i + 1].stop_id,
-                color: color
-            });
-        }
-    });
+  return lines.slice(1).map(line => {
+    const values = [];
+    let current = "";
+    let inQuotes = false;
 
-    // Remove duplicate edges but keep first occurrence color
-    const edgeMap = new Map();
-    edges.forEach(e => {
-        const key = [e.from, e.to].sort().join("-");
-        if (!edgeMap.has(key)) edgeMap.set(key, e.color);
-    });
-
-    return Array.from(edgeMap.entries()).map(([k, color]) => {
-        const [from, to] = k.split("-");
-        return { from, to, color };
-    });
-}
-
-(async function() {
-    const stops = await loadGTFS("/dmrc_gtfs/stops.txt");
-    const stopTimes = await loadGTFS("/dmrc_gtfs/stop_times.txt");
-    const trips = await loadGTFS("/dmrc_gtfs/trips.txt");
-    const routes = await loadGTFS("/dmrc_gtfs/routes.txt");
-
-    // Map trip_id -> route_id
-    const tripToRoute = {};
-    trips.forEach(t => tripToRoute[t.trip_id] = t.route_id);
-
-    // Extract line color from route name
-    function getLineColor(route) {
-        const name = (route.route_short_name || route.route_long_name || "").toUpperCase();
-        if (name.startsWith("B")) return "#0000FF";       // Blue
-        if (name.startsWith("R")) return "#FF0000";       // Red
-        if (name.startsWith("Y")) return "#FFFF00";       // Yellow
-        if (name.startsWith("G")) return "#00FF00";       // Green
-        if (name.startsWith("M")) return "#FF00FF";       // Magenta
-        if (name.startsWith("V")) return "#8A2BE2";       // Violet
-        if (name.startsWith("A")) return "#00FFFF";       // Aqua
-        if (name.startsWith("O")) return "#FFA500";       // Orange
-        if (name.startsWith("P")) return "#FFC0CB";       // Pink
-        if (name.startsWith("R_SP")) return "#A52A2A";    // Rapid Metro (brown)
-        if (name.startsWith("G_DD")) return "#808080";    // Gray
-        return "#888"; // fallback gray
+    for (let char of line) {
+      if (char === '"') inQuotes = !inQuotes;
+      else if (char === "," && !inQuotes) {
+        values.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
     }
+    values.push(current);
 
-    const routeColor = {};
-    routes.forEach(r => {
-        routeColor[r.route_id] = getLineColor(r);
+    return Object.fromEntries(
+      headers.map((h, i) => [h, values[i]?.replace(/"/g, "")])
+    );
+  });
+}
+
+
+const LINE_COLORS = {
+  BLUE: "#2563eb",
+  YELLOW: "#facc15",
+  RED: "#ef4444",
+  GREEN: "#22c55e",
+  VIOLET: "#8b5cf6",
+  PINK: "#ec4899",
+  MAGENTA: "#d946ef",
+  AQUA: "#06b6d4",
+  ORANGE: "#f97316",
+  "ORANGE/AIRPORT": "#f97316",
+  RAPID: "#84cc16",
+  GRAY: "#9ca3af"
+};
+
+function getLineKey(routeLongName) {
+  if (!routeLongName) return null;
+  return routeLongName.split("_")[0].toUpperCase();
+}
+
+ // MAP INITIALIZATION
+
+const map = L.map("map", {
+  center: [28.6139, 77.2090],
+  zoom: 11,
+  zoomControl: true
+});
+
+L.tileLayer(
+  "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  {
+    attribution: "&copy; OpenStreetMap &copy; CARTO"
+  }
+).addTo(map);
+
+
+ //DRAW METRO LINES
+
+async function drawLines() {
+  const routes = await loadCSV("./dmrc_gtfs/routes.txt");
+  const trips = await loadCSV("./dmrc_gtfs/trips.txt");
+  const shapes = await loadCSV("./dmrc_gtfs/shapes.txt");
+
+  // route_id → line key
+  const routeIdToLine = {};
+  routes.forEach(r => {
+    routeIdToLine[r.route_id] = getLineKey(r.route_long_name);
+  });
+
+  // shape_id → route_id
+  const shapeToRoute = {};
+  trips.forEach(t => {
+    if (t.shape_id && !shapeToRoute[t.shape_id]) {
+      shapeToRoute[t.shape_id] = t.route_id;
+    }
+  });
+
+  // group shape points
+  const shapeGroups = {};
+  shapes.forEach(p => {
+    if (!shapeGroups[p.shape_id]) shapeGroups[p.shape_id] = [];
+    shapeGroups[p.shape_id].push({
+      lat: +p.shape_pt_lat,
+      lon: +p.shape_pt_lon,
+      seq: +p.shape_pt_sequence
     });
+  });
 
-    const stopMap = {};
-    stops.forEach(s => stopMap[s.stop_id] = s);
+  Object.entries(shapeGroups).forEach(([shapeId, points]) => {
+    points.sort((a, b) => a.seq - b.seq);
 
-    const edges = buildEdges(stopTimes, tripToRoute, routeColor);
+    const latlngs = points.map(p => [p.lat, p.lon]);
+    const routeId = shapeToRoute[shapeId];
+    const lineKey = routeIdToLine[routeId];
+    const color = LINE_COLORS[lineKey] || "#64748b";
 
-    const width = 900;
-    const height = 700;
+    L.polyline(latlngs, {
+      color,
+      weight: 4,
+      opacity: 0.95
+    }).addTo(map);
+  });
+}
 
-    const mapDiv = d3.select("#map")
-        .style("width", width + "px")
-        .style("height", height + "px");
+/*************************
+ * DRAW & COLOR STATIONS
+ *************************/
+async function drawStations() {
+  const stops = await loadCSV("./dmrc_gtfs/stops.txt");
+  const stopTimes = await loadCSV("./dmrc_gtfs/stop_times.txt");
+  const trips = await loadCSV("./dmrc_gtfs/trips.txt");
+  const routes = await loadCSV("./dmrc_gtfs/routes.txt");
 
-    const canvas = mapDiv.append("canvas")
-        .attr("width", width)
-        .attr("height", height)
-        .node();
+  // trip_id → route_id
+  const tripToRoute = Object.fromEntries(
+    trips.map(t => [t.trip_id, t.route_id])
+  );
 
-    const context = canvas.getContext("2d");
+  // route_id → line key
+  const routeIdToLine = {};
+  routes.forEach(r => {
+    routeIdToLine[r.route_id] = getLineKey(r.route_long_name);
+  });
 
-    const projection = d3.geoMercator()
-        .center([77.23, 28.61])
-        .scale(100000)
-        .translate([width / 2, height / 2]);
+  // stop_id → Set of line keys
+  const stopLines = {};
 
-    // Dark background
-    context.fillStyle = "#111";
-    context.fillRect(0, 0, width, height);
+  stopTimes.forEach(st => {
+    const routeId = tripToRoute[st.trip_id];
+    const lineKey = routeIdToLine[routeId];
+    if (!lineKey) return;
 
-    // Draw edges
-    edges.forEach(e => {
-        const A = stopMap[e.from];
-        const B = stopMap[e.to];
-        context.strokeStyle = e.color;
-        context.lineWidth = 3;
-        context.beginPath();
-        const [x1, y1] = projection([+A.stop_lon, +A.stop_lat]);
-        const [x2, y2] = projection([+B.stop_lon, +B.stop_lat]);
-        context.moveTo(x1, y1);
-        context.lineTo(x2, y2);
-        context.stroke();
+    if (!stopLines[st.stop_id]) {
+      stopLines[st.stop_id] = new Set();
+    }
+    stopLines[st.stop_id].add(lineKey);
+  });
+
+  stops.forEach(stop => {
+    const lat = +stop.stop_lat;
+    const lon = +stop.stop_lon;
+    if (isNaN(lat) || isNaN(lon)) return;
+
+    const linesHere = stopLines[stop.stop_id]
+      ? Array.from(stopLines[stop.stop_id])
+      : [];
+
+    const color = linesHere.length
+      ? LINE_COLORS[linesHere[0]] || "#94a3b8"
+      : "#94a3b8";
+
+    L.circleMarker([lat, lon], {
+      radius: linesHere.length > 1 ? 7 : 5,
+      color,
+      fillColor: color,
+      fillOpacity: 1
+    })
+      .addTo(map)
+      .bindPopup(
+        `<b>${stop.stop_name} ${stop.stop_id}</b><br>${linesHere.join(", ")}`
+      );
+  });
+}
+
+drawLines();
+drawStations();
+
+async function buildGraph() {
+  const stopTimes = await loadCSV("./dmrc_gtfs/stop_times.txt");
+  const trips = await loadCSV("./dmrc_gtfs/trips.txt");
+
+  // trip_id → ordered stops
+  const tripStops = {};
+
+  stopTimes.forEach(st => {
+    if (!tripStops[st.trip_id]) {
+      tripStops[st.trip_id] = [];
+    }
+    tripStops[st.trip_id].push({
+      stop_id: st.stop_id,
+      seq: +st.stop_sequence
     });
+  });
 
-    // Draw stops
+  // sort each trip by sequence
+  Object.values(tripStops).forEach(stops => {
+    stops.sort((a, b) => a.seq - b.seq);
+  });
+
+  // adjacency list
+  const graph = {};
+
+  function addEdge(a, b) {
+    if (!graph[a]) graph[a] = [];
+    graph[a].push({ to: b, weight: 1 });
+  }
+
+  // build graph edges
+  Object.values(tripStops).forEach(stops => {
+    for (let i = 0; i < stops.length - 1; i++) {
+      const from = stops[i].stop_id;
+      const to = stops[i + 1].stop_id;
+
+      addEdge(from, to);
+      addEdge(to, from); // metro is bidirectional
+    }
+  });
+
+  return graph;
+}
+
+function bfs(graph, start, end) {
+  const queue = [start];
+  const visited = new Set([start]);
+  const parent = {};
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+
+    if (current === end) break;
+
+    for (const edge of graph[current] || []) {
+      const next = edge.to;
+
+      if (!visited.has(next)) {
+        visited.add(next);
+        parent[next] = current;
+        queue.push(next);
+      }
+    }
+  }
+
+  // Reconstruct path
+  const path = [];
+  let curr = end;
+
+  while (curr) {
+    path.unshift(curr);
+    curr = parent[curr];
+  }
+
+  return path;
+}
+
+async function testBFS(source, target) {
+  const graph = await buildGraph();
+
+  // Use real stop_ids from your GTFS
+  //const source = '50';   // Rajiv Chowk
+  //const target = '57';   // AIIMS
+
+  const path = bfs(graph, source, target);
+  console.log("BFS path:", path);
+  //console.log("Neighbors of source: ", graph['50'])
+}
+
+async function drawBFSPath(){
+    const graph = await buildGraph();
+    const stops = await loadCSV("./dmrc_gtfs/stops.txt");
+
+    const coords = {};
     stops.forEach(s => {
-        const [x, y] = projection([+s.stop_lon, +s.stop_lat]);
-        context.fillStyle = "white";
-        context.strokeStyle = "#333";
-        context.lineWidth = 1;
-        context.beginPath();
-        context.arc(x, y, 5, 0, Math.PI * 2);
-        context.fill();
-        context.stroke();
+        coords[s.stop_id] = [+s.stop_lat, +s.stop_lon];
     });
 
-    // Tooltip
-    const tooltip = d3.select("#tooltip");
-    d3.select(canvas).on("mousemove", (event) => {
-        const [mx, my] = d3.pointer(event);
-        let found = null;
-        for (let s of stops) {
-            const [x, y] = projection([+s.stop_lon, +s.stop_lat]);
-            if ((mx - x) ** 2 + (my - y) ** 2 < 10 ** 2) {
-                found = s;
-                break;
-            }
-        }
-        if (found) {
-            tooltip.style("opacity", 1)
-                   .html(found.stop_name)
-                   .style("left", (event.pageX + 10) + "px")
-                   .style("top", (event.pageY + 10) + "px");
-        } else {
-            tooltip.style("opacity", 0);
-        }
-    });
+    const source = '1';
+    const target = '58';
+    
+    const path = bfs(graph,source,target);
+    const latlngs = path.map(id => coords[id].filter(Boolean));
 
-
-})();
-
+    L.polyline(latlngs, {
+        color: "ffffff",
+        weight: 6,
+        opacity: 1
+    }).addTo(map);
+}
+drawBFSPath();
 
 
