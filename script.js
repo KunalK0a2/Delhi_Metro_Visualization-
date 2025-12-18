@@ -66,9 +66,9 @@ L.tileLayer(
  //DRAW METRO LINES
 
 async function drawLines() {
-  const routes = await loadCSV("./dmrc_gtfs/routes.txt");
-  const trips = await loadCSV("./dmrc_gtfs/trips.txt");
-  const shapes = await loadCSV("./dmrc_gtfs/shapes.txt");
+  const routes = await loadCSV("/dmrc_gtfs/routes.txt");
+  const trips = await loadCSV("/dmrc_gtfs/trips.txt");
+  const shapes = await loadCSV("/dmrc_gtfs/shapes.txt");
 
   // route_id → line key
   const routeIdToLine = {};
@@ -115,10 +115,10 @@ async function drawLines() {
  * DRAW & COLOR STATIONS
  *************************/
 async function drawStations() {
-  const stops = await loadCSV("./dmrc_gtfs/stops.txt");
-  const stopTimes = await loadCSV("./dmrc_gtfs/stop_times.txt");
-  const trips = await loadCSV("./dmrc_gtfs/trips.txt");
-  const routes = await loadCSV("./dmrc_gtfs/routes.txt");
+  const stops = await loadCSV("/dmrc_gtfs/stops.txt");
+  const stopTimes = await loadCSV("/dmrc_gtfs/stop_times.txt");
+  const trips = await loadCSV("/dmrc_gtfs/trips.txt");
+  const routes = await loadCSV("/dmrc_gtfs/routes.txt");
 
   // trip_id → route_id
   const tripToRoute = Object.fromEntries(
@@ -175,8 +175,8 @@ drawLines();
 drawStations();
 
 async function buildGraph() {
-  const stopTimes = await loadCSV("./dmrc_gtfs/stop_times.txt");
-  const trips = await loadCSV("./dmrc_gtfs/trips.txt");
+  const stopTimes = await loadCSV("/dmrc_gtfs/stop_times.txt");
+  const trips = await loadCSV("/dmrc_gtfs/trips.txt");
 
   // trip_id → ordered stops
   const tripStops = {};
@@ -265,7 +265,7 @@ async function testBFS(source, target) {
 
 async function drawBFSPath(){
     const graph = await buildGraph();
-    const stops = await loadCSV("./dmrc_gtfs/stops.txt");
+    const stops = await loadCSV("/dmrc_gtfs/stops.txt");
 
     const coords = {};
     stops.forEach(s => {
@@ -285,5 +285,6 @@ async function drawBFSPath(){
     }).addTo(map);
 }
 drawBFSPath();
+
 
 
